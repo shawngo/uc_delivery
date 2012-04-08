@@ -1,0 +1,109 @@
+<?php
+
+/**
+ * @file
+ *
+ * Install hooks for UC Delivery.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function uc_delivery_schema() {
+  $schema = array();
+  $schema['uc_delivery_orders'] = array(
+    'fields' => array(
+      'fid' => array(
+        'description' => 'Delivery fee ID.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE, ),
+      'order_id' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,),
+      'fee_type' => array(
+        'description' => 'Type of fee',
+        'type' => 'varchar',
+        'not null' => TRUE,
+        'length' => 100,
+        'default' => '',),
+      'fee_description' => array(
+        'description' => 'Description of fee',
+        'type' => 'varchar',
+        'not null' => TRUE,
+        'length' => 255,
+        'default' => '',),
+      'amount' => array(
+        'description' => 'The fee amount',
+        'type' => 'numeric',
+        'precision' => 16,
+        'scale' => 5,
+        'not null' => TRUE,
+        'default' => 0.0,
+      ),
+    ),
+    'primary key' => array('fid'),
+  );
+  $schema['uc_delivery_options'] = array(
+    'fields' => array(
+      'oid' => array(
+        'description' => 'Delivery option ID.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE, ),
+      'enabled' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,),
+      'weight' => array(
+        'type' => 'int',
+        'description' => 'The display order for the fee.',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,),
+      'fee_element' => array(
+        'description' => 'The type of html field to use to display the fee.',
+        'type' => 'varchar',
+        'not null' => TRUE,
+        'length' => 100,
+        'default' => '',),
+      'title' => array(
+        'description' => 'Fee title',
+        'type' => 'varchar',
+        'not null' => TRUE,
+        'length' => 100,
+        'default' => '',),
+      'fee_description' => array(
+        'description' => 'Description of fee',
+        'type' => 'varchar',
+        'not null' => TRUE,
+        'length' => 255,
+        'default' => '',),
+      'fee_options' => array(
+        'description' => 'Fee options',
+        'type' => 'text',
+        'not null' => TRUE,
+        'default' => '',),
+    ),
+    'primary key' => array('oid'),
+  );
+  return $schema;
+}
+
+/**
+ * Implements hook_install().
+ */
+function uc_delivery_install() {
+  drupal_install_schema('uc_delivery');
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function uc_delivery_uninstall() {
+  drupal_uninstall_schema('uc_delivery');
+  db_query("DELETE FROM {variable} WHERE name LIKE 'uc_delivery%%'");
+}

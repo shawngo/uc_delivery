@@ -1,0 +1,383 @@
+<?php
+
+/**
+ * @file
+ * Define arbitrary fees which can be selected on the checkout page and added
+ * to an order.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function uc_delivery_menu() {
+  $items['admin/store/settings/delivery'] = array(
+    'title' => 'Delivery fees overview',
+    'access arguments' => array('administer delivery charges'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('uc_delivery_admin_settings_form'),
+    'file' => 'uc_delivery.admin.inc',
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  $items['admin/store/settings/delivery/overview'] = array(
+    'title' => 'Settings',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => 1,
+  );
+
+  $items['admin/store/settings/delivery/add'] = array(
+    'title' => 'Add delivery option',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('uc_delivery_add_option_form'),
+    'access arguments' => array('administer delivery charges'),
+    'file' => 'uc_delivery.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 2,
+  );
+
+  $items['admin/store/settings/delivery/%uc_delivery_option/edit'] = array(
+    'title' => 'Edit delivery option',
+    'description' => 'Update delivery fee option',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('uc_delivery_edit_option_form', 4),
+    'access arguments' => array('administer delivery charges'),
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_delivery.admin.inc',
+    'weight' => 3,
+  );
+
+
+  return $items;
+}
+
+function uc_delivery_perm() {
+  return array('administer delivery charges');
+}
+
+/**
+ * Implements hook_checkout_pane().
+ */
+function uc_delivery_checkout_pane() {
+  $panes = array();
+
+  // Add the Delivery charges pane.
+  $panes[] = array(
+    'id' => 'uc_delivery',
+    'title' => check_plain(variable_get('uc_delivery_fs_title', t('Delivery charges'))),
+    'desc' => variable_get('uc_delivery_fs_description', t('Select delivery options below.')),
+    'callback' => 'uc_delivery_get_checkout_pane',
+  );
+
+  return $panes;
+}
+
+/**
+ * Menu path load callbackto load a delivery fee option.
+ * @param
+ *   integer $option_id A delivery fee option id.
+ * @return
+ *   object A semi-loaded delivery fee option object.
+ */
+function uc_delivery_option_load($option_id) {
+  return db_fetch_object(db_query("SELECT * FROM {uc_delivery_options} WHERE oid = %d", $option_id));
+}
+
+/**
+ * Callback function for hook_checkout_pane().
+ *
+ * Return the checkout pane for the given operation.
+ */
+function uc_delivery_get_checkout_pane($op, &$arg1, $arg2) {
+  switch ($op) {
+    case 'view':
+      $description = check_plain(variable_get('uc_delivery_fs_description', t('Select delivery options below.')));
+
+      $fees = array();
+      $result = db_query('SELECT * FROM {uc_delivery_options} WHERE enabled = 1 ORDER BY weight ASC');
+      while ($row = db_fetch_array($result)) {
+        $row['fee_options'] = unserialize($row['fee_options']);
+        $fees[] = $row;
+      }
+
+      // Array to hold the client side options to set in
+      // Drupal.settings.uc_delivery.
+      $js_settings = array();
+      $defaults_js = '';
+      foreach ($fees as $fee) {
+        $item_id = 'uc_delivery_fee_id_' . $fee['oid'];
+        $default = $cur_option = 0;
+        $options = array();
+        foreach ($fee['fee_options'] as $index => $fee_option) {
+          $item_id_index = $item_id . '-' . $index;
+          if (isset($arg1->uc_delivery_fees[$item_id_index]) && $arg1->uc_delivery_fees[$item_id_index] == $fee_option['amount']) {
+            $default = $item_id_index;
+
+            // Select this item on the front-end.
+            $defaults_js .= "set_line_item('$item_id', '" . t($fee['title']) . ' - ' . t($fee_option['label']) . "', ". $fee_option['amount'] . ", 20, 1, true);";
+          }
+
+          $js_settings[$item_id][$index] = $fee_option['amount'];
+
+          $options[$item_id_index] = check_plain($fee_option['label']) . ' ($' . number_format($fee_option['amount'], 2) . ')';
+          $cur_option++;
+        }
+        if ($defaults_js) {
+          drupal_add_js($defaults_js, 'inline');
+        }
+        drupal_add_js(array('uc_delivery' => $js_settings), 'setting');
+
+        // Set the JS setting for this fee option.
+        $js_fees[$fee['oid']] = $fee;
+
+        // Add the form for the fee.
+        $js_event = $fee['fee_element'] == 'select' ? 'onchange' : 'onclick';
+        $contents['uc_delivery_fee_id_' . $fee['oid']] = array(
+          '#type' => $fee['fee_element'],
+          '#title' => $fee['title'],
+          '#description' => $fee['fee_description'],
+          '#options' => $options,
+          '#default_value' => $default,
+          '#required' => TRUE,
+          '#attributes' => array(
+            'onchange' => "set_line_item('uc_delivery_fee_id_" . $fee['oid'] . "', '" . t($fee['title']) . "', uc_delivery_get_fee_amount(this.value), 20, 1, true);"),
+        );
+
+        if ($fee['fee_element'] == 'radios') {
+          $contents['uc_delivery_fee_id_' . $fee['oid']]['#theme'] = 'uc_delivery_select';
+        }
+      }
+
+      drupal_add_js(array('uc_delivery' => $js_fees), 'setting');
+
+      // Add a simple JavaScript function so that the index value can
+      // translate to a delivery fee value.
+      drupal_add_js('
+         function uc_delivery_get_fee_amount( value ) {
+           var values = value.split("-");
+           return Drupal.settings.uc_delivery[values[0]][values[1]];
+         }
+      ', 'inline');
+
+      // Return the checkout pane view.
+      return array('description' => $description, 'contents' => $contents);
+      break;
+
+    case 'process':
+      // Get all active fees.
+      $active_fees = uc_delivery_active_fees();
+
+      // Break them into fee->options structure to easily pull indices.
+      foreach ($arg2 as $idx => $fee_options) {
+        list($fid, $oid) = explode('-', str_replace('uc_delivery_fee_id_', '', $fee_options));
+        $amount = uc_delivery_get_fee_option_amount($active_fees, $fid, $oid);
+
+        if ($amount > 0) {
+          $arg1->uc_delivery_fees[$fee_options] = $amount;
+        }
+        else {
+          unset($arg1->uc_delivery_fees[$fee_options]);
+        }
+      }
+      break;
+
+    case 'settings':
+      $form['uc_delivery_fs_title'] = array(
+        '#type' => 'textfield',
+        '#title' => t('UC Delivery pane / fieldset title.'),
+        '#default_value' => variable_get('uc_delivery_fs_title', t('Delivery fees')),
+      );
+
+      $form['uc_delivery_fs_description'] = array(
+        '#type' => 'textarea',
+        '#title' => t('UC Delivery pane / fieldset description'),
+        '#default_value' => variable_get('uc_delivery_fs_description', t('Select delivery options below.')),
+      );
+      return $form;
+      break;
+  }
+}
+
+function uc_delivery_get_fee_option_amount($fees, $fid, $oid) {
+  foreach ($fees as $fee) {
+    if ($fee['oid'] == $fid) {
+      return $fee['fee_options'][$oid]['amount'];
+    }
+  }
+}
+
+/**
+ * Return Fee amount and label for a given fee string.
+ * @param
+ *   String $fee_type_string A String containing fee information.
+ * @return
+ *   Array Returns an array with keys amount and label.
+ */
+function uc_delivery_get_fee_data($fee_type_string) {
+  list($oid, $index) = explode('-', str_replace('uc_delivery_fee_id_', '', $fee_type_string));
+  $result = db_fetch_array(db_query('SELECT title, fee_options FROM {uc_delivery_options} WHERE oid = %d', $oid));
+  $fee_options = $result['fee_options'];
+  $fee_options = unserialize($fee_options);
+  $fee_data = array(
+    'title' => check_plain($result['title']),
+    'amount' => doubleval($fee_options[$index]['amount']),
+    'label' => check_plain($fee_options[$index]['label']),
+  );
+  return $fee_data;
+}
+
+/**
+ * Implements hook_order_pane().
+ */
+function uc_delivery_order_pane() {
+  $panes[] = array(
+    'id' => 'uc_delivery',
+    'callback' => 'uc_delivery_get_order_pane',
+    'title' => variable_get('uc_delivery_fs_title', t('Delivery fees')),
+    'desc' => t('Allows the user to select delivery fees to their order.'),
+    'class' => 'pos-left',
+    'weight' => 7,
+    'show' => array('view', 'invoice', 'customer'),
+  );
+
+  return $panes;
+}
+
+/**
+ * Return the order pane for the given operation.
+ */
+function uc_delivery_get_order_pane($op, $arg1) {
+  switch ($op) {
+    case 'view':
+    case 'customer':
+    case 'invoice':
+      $amount = db_result(db_query('SELECT SUM(amount) FROM {uc_delivery_orders} WHERE order_id = %d', $arg1->order_id));
+
+      // Add the output of this delivery fee to the order view.
+      $output = variable_get('uc_delivery_fs_title', t('Delivery fees')) . t(' total: @delivery_fee', array('@delivery_fee' => uc_currency_format($amount)));
+      return $output;
+      break;
+  }
+}
+
+/**
+ * Returns an array of active delivery fees.
+ */
+function uc_delivery_active_fees() {
+  $result = db_query('SELECT * FROM {uc_delivery_options} WHERE enabled = 1');
+  while ($row = db_fetch_array($result)) {
+    $row['fee_options'] = unserialize($row['fee_options']);
+    $fees[] = $row;
+  }
+  return $fees;
+}
+
+/**
+ * Implements hook_line_item().
+ *
+ * @return The items added to the line item array.
+ */
+function uc_delivery_line_item() {
+
+  $fees = uc_delivery_active_fees();
+  $weight = 1;
+  foreach ($fees as $option) {
+    $items[] = array(
+      'id' => 'uc_delivery_fee_id_' . $option['oid'],
+      'title' => t($option['title'] . '(' . $option['label'] . ')'),
+      'weight' => $weight,
+      'default' => FALSE,
+      'add_list' => TRUE,
+      'stored' => TRUE,
+      'calculated' => TRUE,
+      'display_only' => FALSE,
+      'callback' => 'uc_delivery_get_fee',
+    );
+    $weight++;
+  }
+  return $items;
+}
+
+/**
+ * Implements hook_order().
+ *
+ * @param $op - The operation being performed.
+ * @param $arg1 - The argument whose value is based on the operation.
+ * @param $arg2 - The second argument whose value is based on the operation.
+ * @return unknown_type
+ */
+function uc_delivery_order($op, $arg1, $arg2) {
+  switch ($op) {
+    case 'load':
+      // Load the fee given this order ID.
+      $result = db_query("SELECT * FROM {uc_delivery_orders} WHERE order_id = %d", $arg1->order_id);
+      while ($row = db_fetch_array($result)) {
+        $fee_id = 'uc_delivery_fee_id_' . $row['oid'];
+        $arg1->uc_delivery_fees[$row['fee_type']] = $row['amount'];
+      }
+
+      break;
+
+    case 'delete':
+      // Delete the delivery fees from the database.
+      db_query("DELETE FROM {uc_delivery_orders} WHERE order_id = %d", $arg1->order_id);
+      break;
+
+    case 'save':
+      db_query("DELETE FROM {uc_delivery_orders} WHERE  order_id = %d", $arg1->order_id);
+      db_query('DELETE FROM {uc_order_line_items} WHERE order_id = %d AND type LIKE "uc_delivery_fee_id_%"', $arg1->order_id);
+
+      foreach ($arg1->line_items as $key => $line_item) {
+        if ($line_item['type']) {
+          unset($arg1->line_items[$key]);
+          break;
+        }
+      }
+
+      if (isset($arg1->uc_delivery_fees) && !empty($arg1->uc_delivery_fees)) {
+        foreach ($arg1->uc_delivery_fees as $fee_id => $fee_amount) {
+          db_query("INSERT INTO {uc_delivery_orders} ( order_id, fee_type, amount) VALUES (%d, '%s', %f)", $arg1->order_id, $fee_id, $fee_amount);
+
+          $fee_info = uc_delivery_get_fee_data($fee_id);
+          // Add the line item to the order.
+          uc_order_line_item_add(
+            $arg1->order_id, // This is the order ID.
+            // Line item type.
+            $fee_id,
+            // Line item title.
+            $fee_info['title'] . ': ' . $fee_info['label'],
+            // Line item amount.
+            $fee_info['amount'],
+            // Line item weight.
+            NULL,
+            array()
+          );
+        }
+      }
+      break;
+
+    case 'total':
+      $amount = 0;
+      if (isset($arg1->uc_delivery_fees) && !empty($arg1->uc_delivery_fees)) {
+        foreach ($arg1->uc_delivery_fees as $fee_id => $fee_amount) {
+          $amount += $fee_amount;
+        }
+      }
+      return $amount;
+      break;
+  }
+}
+
+/**
+ * Returns the fee amount given the order object.
+ *
+ * @param $order
+ * @return unknown_type
+ */
+function uc_delivery_get_fee_amount($order, $type) {
+  if (!empty($order->uc_delivery_fees) && isset($order->uc_delivery_fees['uc_delivery_fee_id_' . $type])) {
+    return $order->uc_delivery_fees['uc_delivery_fee_id_' . $type];
+  }
+
+  // Otherwise, get it from the database.
+  return db_result(db_query("SELECT amount FROM {uc_delivery_orders} WHERE order_id = %d AND fee_type = '%s'", $order->order_id, 'uc_delivery_fee_id_' . $type));
+}
