@@ -106,14 +106,22 @@ function uc_delivery_get_checkout_pane($op, &$arg1, $arg2) {
       foreach ($fees as $fee) {
         $item_id = 'uc_delivery_fee_id_' . $fee['oid'];
         $default = $cur_option = 0;
+        // $default_js is set up to only respect radio buttons since the value
+        // is being reset here for every fee as to not build up several calls
+        // to the same fee.
+        $default_js = '';
         $options = array();
         foreach ($fee['fee_options'] as $index => $fee_option) {
           $item_id_index = $item_id . '-' . $index;
+          if ($index == 0) {
+            $default = $item_id_index;
+            $defaults_js = "set_line_item('$item_id', '" . t($fee['title']) . ' - ' . t($fee_option['label']) . "', ". $fee_option['amount'] . ", 20, 1, true);";
+          }
           if (isset($arg1->uc_delivery_fees[$item_id_index]) && $arg1->uc_delivery_fees[$item_id_index] == $fee_option['amount']) {
             $default = $item_id_index;
 
             // Select this item on the front-end.
-            $defaults_js .= "set_line_item('$item_id', '" . t($fee['title']) . ' - ' . t($fee_option['label']) . "', ". $fee_option['amount'] . ", 20, 1, true);";
+            $defaults_js = "set_line_item('$item_id', '" . t($fee['title']) . ' - ' . t($fee_option['label']) . "', ". $fee_option['amount'] . ", 20, 1, true);";
           }
 
           $js_settings[$item_id][$index] = $fee_option['amount'];
